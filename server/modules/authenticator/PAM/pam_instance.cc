@@ -224,6 +224,27 @@ PamAuthenticatorModule::PamAuthenticatorModule(AuthSettings& settings, PasswordM
 {
 }
 
+mariadb::AuthByteVec PamAuthenticatorModule::generate_token(const string& password)
+{
+    mariadb::AuthByteVec rval;
+    if (m_settings.be_mapping == BackendMapping::MARIADB_PASSTHROUGH)
+    {
+        // In this case the client sent a cleartext password. Convert it to SHA1(password) for standard auth.
+        if (!password.empty())
+        {
+            rval.resize(SHA_DIGEST_LENGTH);
+            auto pwlen = strlen(password.c_str());
+            gw_sha1_str((const uint8_t*)password.c_str(), pwlen, rval.data());
+        }
+    }
+    else
+    {
+        // Return password as is. Works with normal pam authentication.
+        rval.assign(password.begin(), password.end());
+    }
+    return rval;
+}
+
 extern "C"
 {
 /**

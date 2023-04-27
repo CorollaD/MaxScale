@@ -34,6 +34,7 @@
 #include <maxscale/protocol/mariadb/mysql.hh>
 #include <maxscale/protocol/mariadb/module_names.hh>
 #include "user_data.hh"
+#include "maxscale/protocol/mariadb/client_connection.hh"
 
 using mxs::ReplyState;
 using std::string;
@@ -2662,16 +2663,30 @@ MariaDBBackendConnection::StateMachineRes MariaDBBackendConnection::authenticate
     // Have a complete response from the server.
     uint8_t cmd = MYSQL_GET_COMMAND(buffer.data());
 
+    auto maybe_send_to_client = [this](const GWBUF& auth_reply) {
+        auto protocol_data = mysql_session();
+        if (protocol_data->need_be_auth_reply)
+        {
+            auto client_conn = dynamic_cast<MariaDBClientConnection*>(m_session->client_connection());
+            mxb_assert(client_conn);
+            // TODO: if this needs to work with other client protocols, add some virtual func.
+            client_conn->backend_authentication_success(auth_reply.shallow_clone());
+            protocol_data->need_be_auth_reply = false;
+        }
+    };
+
     // Three options: OK, ERROR or AuthSwitch/other.
     auto rval = StateMachineRes::ERROR;
     if (cmd == MYSQL_REPLY_OK)
     {
         MXB_INFO("Authentication to '%s' succeeded.", m_server.name());
         rval = StateMachineRes::DONE;
+        maybe_send_to_client(buffer);
     }
     else if (cmd == MYSQL_REPLY_ERR)
     {
         // Server responded with an error, authentication failed.
+        maybe_send_to_client(buffer);
         handle_error_response(m_dcb, &buffer);
         rval = StateMachineRes::ERROR;
     }

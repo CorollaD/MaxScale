@@ -37,6 +37,7 @@ const string pam_mode_pw_2fa = "password_2FA";
 const string opt_be_map = "pam_backend_mapping";
 const string be_map_none = "none";
 const string be_map_mariadb = "mariadb";
+const string be_map_mariadbpt = "mariadb_passthrough";
 
 const string opt_pam_user_map = "pam_mapped_pw_file";
 
@@ -131,6 +132,10 @@ PamAuthenticatorModule* PamAuthenticatorModule::create(mxs::ConfigParameters* op
         {
             settings.be_mapping = BackendMapping::MARIADB;
         }
+        else if (user_be_map == be_map_mariadbpt)
+        {
+            settings.be_mapping = BackendMapping::MARIADB_PASSTHROUGH;
+        }
         else if (user_be_map != be_map_none)
         {
             MXB_ERROR(errmsg,
@@ -166,7 +171,12 @@ PamAuthenticatorModule* PamAuthenticatorModule::create(mxs::ConfigParameters* op
 
 uint64_t PamAuthenticatorModule::capabilities() const
 {
-    return CAP_ANON_USER;
+    uint64_t rval = CAP_ANON_USER;
+    if (m_settings.be_mapping == BackendMapping::MARIADB_PASSTHROUGH)
+    {
+        rval |= CAP_PASSTHROUGH;
+    }
+    return rval;
 }
 
 std::string PamAuthenticatorModule::supported_protocol() const
@@ -190,6 +200,7 @@ PamAuthenticatorModule::create_backend_authenticator(mariadb::BackendAuthData& a
         break;
 
     case BackendMapping::MARIADB:
+    case BackendMapping::MARIADB_PASSTHROUGH:
         rval = std::make_unique<MariaDBBackendSession>(auth_data);
         break;
     }

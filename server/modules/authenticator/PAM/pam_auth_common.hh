@@ -43,7 +43,8 @@ enum dialog_plugin_msg_types
 enum class BackendMapping
 {
     NONE,       /**< No mapping, default */
-    MARIADB     /**< Mapped to a MariaDB user */
+    MARIADB,    /**< Mapped to a MariaDB user */
+    MARIADB_PASSTHROUGH  /**< Do not check user account or password, defer to backend */
 };
 
 struct PasswordHash

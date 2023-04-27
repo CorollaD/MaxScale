@@ -1626,6 +1626,7 @@ bool Listener::post_configure(const mxs::ConfigParameters& protocol_params)
     {
         bool uam_ok = true;
         auto* prot_module = data->m_proto_module.get();
+        // TODO: don't start UAM when listener is in passthrough mode.
         if (prot_module->capabilities() & mxs::ProtocolModule::CAP_AUTHDATA)
         {
             auto svc = static_cast<Service*>(m_config.service);

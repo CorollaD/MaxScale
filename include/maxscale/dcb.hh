@@ -661,8 +661,9 @@ private:
     bool socket_read(size_t maxbytes, ReadLimit limit_type);
     bool socket_read_SSL(size_t maxbytes);
 
-    void socket_write_SSL();
-    void socket_write();
+    void socket_write_SSL(GWBUF& buffer);
+    void socket_write(GWBUF& buffer);
+    void write_data(GWBUF& buffer);
 
     std::tuple<uint8_t*, size_t> calc_read_limit_strict(size_t maxbytes);
 

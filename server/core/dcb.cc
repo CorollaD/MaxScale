@@ -682,25 +682,21 @@ bool DCB::writeq_append(GWBUF&& data)
     // when the DCB has already been removed from the epoll-set.
     mxb_assert(m_owner == RoutingWorker::get_current());
 
-    // This can be slow in a situation where data is queued faster than it can be sent.
-    m_writeq.merge_back(move(data));
-
-    mxb_assert_message(m_fd != DCB::FD_CLOSED, "Trying to write to closed socket.");
-
-    if (!m_session || m_session->state() != MXS_SESSION::State::STOPPING)
+    if (m_writeq.empty())
     {
-        /**
-         * MXS_SESSION::State::STOPPING means that one of the backends is closing
-         * the router session. Some backends may have not completed
-         * authentication yet and thus they have no information about router
-         * being closed. Session state is changed to MXS_SESSION::State::STOPPING
-         * before router's closeSession is called and that tells that DCB may
-         * still be writable.
-         */
-        mxb_assert(m_state != DCB::State::DISCONNECTED);
-    }
+        write_data(data);
 
-    writeq_drain();
+        if (!data.empty())
+        {
+            m_writeq.merge_back(move(data));
+        }
+    }
+    else
+    {
+        // This can be slow in a situation where data is queued faster than it can be sent.
+        m_writeq.merge_back(move(data));
+        writeq_drain();
+    }
 
     if (m_high_water > 0 && m_writeq.length() > m_high_water && !m_high_water_reached)
     {
@@ -710,13 +706,8 @@ bool DCB::writeq_append(GWBUF&& data)
     return true;    // Propagate this change to callers once it's clear the asserts are not hit.
 }
 
-void DCB::writeq_drain()
+void DCB::write_data(GWBUF& buffer)
 {
-    // polling_worker() can not be used here, the last backend drain takes place
-    // when the DCB has already been removed from the epoll-set.
-    mxb_assert(m_owner == RoutingWorker::get_current());
-    bool had_data = !m_writeq.empty();
-
     if (m_encryption.handle)
     {
         if (m_encryption.read_want_write)
@@ -725,12 +716,22 @@ void DCB::writeq_drain()
             // so retry the read.
             trigger_read_event();
         }
-        socket_write_SSL();
+        socket_write_SSL(buffer);
     }
     else
     {
-        socket_write();
+        socket_write(buffer);
     }
+}
+
+void DCB::writeq_drain()
+{
+    // polling_worker() can not be used here, the last backend drain takes place
+    // when the DCB has already been removed from the epoll-set.
+    mxb_assert(m_owner == RoutingWorker::get_current());
+    bool had_data = !m_writeq.empty();
+
+    write_data(m_writeq);
 
     if (had_data && m_writeq.empty())
     {
@@ -799,12 +800,12 @@ void DCB::destroy()
  * linked from the DCB. All communication is encrypted and done via the SSL
  * structure. Data is written from the DCB write queue.
  */
-void DCB::socket_write_SSL()
+void DCB::socket_write_SSL(GWBUF& buffer)
 {
     bool keep_writing = true;
     size_t total_written = 0;
 
-    while (keep_writing && !m_writeq.empty())
+    while (keep_writing && !buffer.empty())
     {
         // OpenSSL thread-local error queue should be cleared before an I/O op.
         ERR_clear_error();
@@ -820,14 +821,14 @@ void DCB::socket_write_SSL()
         {
             // SSL_write takes the number of bytes as int. It's imaginable that the writeq length
             // could be greater than INT_MAX, so limit the write amount.
-            writable = std::min(m_writeq.length(), (size_t)INT_MAX);
+            writable = std::min(buffer.length(), (size_t)INT_MAX);
         }
 
         // TODO: Use SSL_write_ex when can assume a more recent OpenSSL (Centos7 limitation).
-        int res = SSL_write(m_encryption.handle, m_writeq.data(), writable);
+        int res = SSL_write(m_encryption.handle, buffer.data(), writable);
         if (res > 0)
         {
-            m_writeq.consume(res);
+            buffer.consume(res);
             total_written += res;
 
             m_encryption.retry_write_size = 0;
@@ -879,26 +880,26 @@ void DCB::socket_write_SSL()
 /**
  * Write data to the underlying socket. The data is taken from the DCB's write queue.
  */
-void DCB::socket_write()
+void DCB::socket_write(GWBUF& buffer)
 {
     mxb_assert(m_fd != FD_CLOSED);
     bool keep_writing = true;
     size_t total_written = 0;
 
     // Write until socket blocks, we run out of bytes or an error occurs.
-    while (keep_writing && !m_writeq.empty())
+    while (keep_writing && !buffer.empty())
     {
-        auto writable_bytes = m_writeq.length();
-        auto res = ::write(m_fd, m_writeq.data(), writable_bytes);
+        auto writable_bytes = buffer.length();
+        auto res = ::write(m_fd, buffer.data(), writable_bytes);
         if (res > 0)
         {
-            MXB_DEBUG("%s\n%s", whoami().c_str(), mxb::hexdump(m_writeq.data(), res).c_str());
-            m_writeq.consume(res);
+            MXB_DEBUG("%s\n%s", whoami().c_str(), mxb::hexdump(buffer.data(), res).c_str());
+            buffer.consume(res);
             total_written += res;
 
             // Either writeq is consumed or socket could not accept all data. In either case,
             // stop writing.
-            mxb_assert(m_writeq.empty() || (res < (int64_t)writable_bytes));
+            mxb_assert(buffer.empty() || (res < (int64_t)writable_bytes));
             keep_writing = false;
         }
         else if (res == 0)

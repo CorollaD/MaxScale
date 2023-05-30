@@ -207,6 +207,11 @@ void set_sql_batch_size(const char* arg)
     }
 }
 
+static void enable_thread_affinity(const char* arg)
+{
+    mxs::RoutingWorker::enable_thread_affinity();
+}
+
 namespace
 {
 
@@ -287,6 +292,9 @@ const DEBUG_ARGUMENT debug_arguments[] =
     },
     {
         "gdb-stacktrace", use_gdb, "Use GDB to generate stacktraces"
+    },
+    {
+        "thread-affinity", enable_thread_affinity, "Set thread affinity"
     },
     {
         "sql-batch-size", set_sql_batch_size, "Set maximum batch size for the REST-API (default: 10MiB)"

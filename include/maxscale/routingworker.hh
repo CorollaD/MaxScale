@@ -55,6 +55,8 @@ public:
     static constexpr std::chrono::seconds TERMINATION_DELAY = 5s;
 #endif
 
+    static void enable_thread_affinity();
+
     virtual ~RoutingWorker();
 
     class InfoTask;

@@ -148,6 +148,7 @@ public:
     int              epoll_listener_fd {-1};        // Shared epoll descriptor for listening descriptors.
     WN*              pNotifier {nullptr};           // Watchdog notifier.
     bool             termination_in_process {false};// Is a routing worker being terminated.
+    bool             set_thread_affinity {false};
 } this_unit;
 
 thread_local struct this_thread
@@ -1463,6 +1464,25 @@ void RoutingWorker::cancel_dcalls()
 
 bool RoutingWorker::pre_run()
 {
+    if (this_unit.set_thread_affinity)
+    {
+        auto my_cpu = index() % std::thread::hardware_concurrency();
+
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        CPU_SET(my_cpu, &cpuset);
+
+        if (int rc = pthread_setaffinity_np(pthread_self(), sizeof(cpuset), &cpuset); rc == 0)
+        {
+            MXB_INFO("Worker '%s' bound to CPU %d", this->thread_name().c_str(), my_cpu);
+        }
+        else
+        {
+            MXB_WARNING("Failed to set CPU affinity to %d for worker '%s': %d, %s",
+                        my_cpu, this->thread_name().c_str(), rc, mxb_strerror(rc));
+        }
+    }
+
     mxb_assert(Worker::is_current());
 
     this_thread.pCurrent_worker = this;
@@ -2385,6 +2405,12 @@ void RoutingWorker::start_shutdown()
     pWorker->execute([pWorker]() {
         pWorker->start_try_shutdown();
     }, EXECUTE_QUEUED);
+}
+
+// static
+void RoutingWorker::enable_thread_affinity()
+{
+    this_unit.set_thread_affinity = true;
 }
 
 // static

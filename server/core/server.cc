@@ -875,6 +875,9 @@ bool Server::post_configure()
         m_ssl_ctx.assign(ctx);
         std::lock_guard<std::mutex> guard(m_ssl_lock);
         m_ssl_config = ctx ? ctx->config() : mxb::SSLConfig();
+
+        // Store the configured rank value in the mxs::Target base class.
+        m_rank = m_settings.m_rank.atomic_get();
     }
 
     return ok;

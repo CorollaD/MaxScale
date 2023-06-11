@@ -121,11 +121,6 @@ public:
         return m_name.c_str();
     }
 
-    int64_t rank() const override
-    {
-        return m_settings.m_rank.get();
-    }
-
     int64_t priority() const override
     {
         return m_settings.m_priority.get();

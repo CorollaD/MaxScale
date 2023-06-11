@@ -284,7 +284,10 @@ public:
     /**
      * Get target rank
      */
-    virtual int64_t rank() const = 0;
+    int64_t rank() const
+    {
+        return m_rank.load(std::memory_order_relaxed);
+    }
 
     /**
      * Returns the number of seconds that this target is behind in replication. If this target is a master or
@@ -551,6 +554,12 @@ protected:
     std::mutex         m_average_write_mutex;               /**< Protects response time modifications */
 
     std::atomic<RLagState> m_rlag_state {RLagState::NONE};
+
+    // The rank of this target. This should be set by the derived class (i.e. SERVER or SERVICE) whenever the
+    // configuration is changed. Given the fact that the rank is not expected to change that often but it's
+    // used very often in the routing, the extra effort of having to explicitly set it whenever the derived
+    // class is configured is worth it.
+    std::atomic<int64_t> m_rank {RANK_PRIMARY};
 };
 
 class Error

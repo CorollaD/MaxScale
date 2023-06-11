@@ -2362,6 +2362,9 @@ bool Service::post_configure()
 
     m_log_level.store(m_config.log_levels(), std::memory_order_relaxed);
 
+    // Store the configured rank value in the mxs::Target base class.
+    m_rank = config.rank;
+
     return true;
 }
 

@@ -536,7 +536,22 @@ void service_update_targets(const mxs::Monitor* monitor)
     }
 }
 
-uint64_t Service::status() const
+// static
+void Service::update_status()
+{
+    mxs::MainWorker::get()->execute([](){
+        LockGuard guard(this_unit.lock);
+        for (Service* s : this_unit.services)
+        {
+            if (!s->m_parents.empty())
+            {
+                s->calculate_status();
+            }
+        }
+    }, mxb::Worker::EXECUTE_AUTO);
+}
+
+void Service::calculate_status()
 {
     uint64_t status = 0;
 
@@ -560,7 +575,7 @@ uint64_t Service::status() const
         }
     }
 
-    return status;
+    m_status.store(status, std::memory_order_relaxed);
 }
 
 Service::Config::Config(SERVICE* service)
@@ -1791,6 +1806,8 @@ void Service::targets_updated()
             server->track_variable(variable);
         }
     }
+
+    calculate_status();
 }
 
 bool Service::protocol_is_compatible(Service* other) const

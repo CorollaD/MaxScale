@@ -91,6 +91,8 @@ public:
      */
     static std::vector<Service*> get_all();
 
+    static void update_status();
+
     /**
      * Stop a service
      *
@@ -146,8 +148,6 @@ public:
     {
         return m_data->targets;
     }
-
-    uint64_t status() const override;
 
     /**
      * Persist service configuration into a stream
@@ -328,6 +328,7 @@ private:
     void set_start_user_account_manager(SAccountManager user_manager);
 
     void propagate_target_update();
+    void calculate_status();
 
     void add_parent(Service* parent)
     {

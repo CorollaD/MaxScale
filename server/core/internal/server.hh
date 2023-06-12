@@ -258,11 +258,6 @@ public:
 
     void set_extra_port(int new_port) override;
 
-    uint64_t status() const override
-    {
-        return m_status;
-    }
-
     void set_status(uint64_t bit) override;
     void clear_status(uint64_t bit) override;
     void assign_status(uint64_t status) override;
@@ -403,7 +398,6 @@ private:
     const std::string m_name;       /**< Server config name */
     Settings          m_settings;   /**< Server settings */
     VersionInfo       m_info;       /**< Server version and type information */
-    uint64_t          m_status {0};
     bool              m_active {true};
     int64_t           m_rpl_lag {mxs::Target::RLAG_UNDEFINED};  /**< Replication lag in seconds */
     int64_t           m_ping {mxs::Target::PING_UNDEFINED};     /**< Ping in microseconds */

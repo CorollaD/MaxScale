@@ -37,6 +37,7 @@
 #include "internal/monitormanager.hh"
 #include "internal/servermanager.hh"
 #include "internal/session.hh"
+#include "internal/service.hh"
 
 using maxbase::Worker;
 using maxscale::RoutingWorker;
@@ -494,17 +495,32 @@ Server* Server::create_test_server()
 
 void Server::set_status(uint64_t bit)
 {
-    m_status |= bit;
+    auto old_status = m_status.fetch_or(bit, std::memory_order_relaxed);
+
+    if ((old_status & bit) == 0)
+    {
+        Service::update_status();
+    }
 }
 
 void Server::clear_status(uint64_t bit)
 {
-    m_status &= ~bit;
+    auto old_status = m_status.fetch_and(~bit, std::memory_order_relaxed);
+
+    if (old_status & bit)
+    {
+        Service::update_status();
+    }
 }
 
 void Server::assign_status(uint64_t status)
 {
-    m_status = status;
+    auto old_status = m_status.exchange(status, std::memory_order_relaxed);
+
+    if (old_status != status)
+    {
+        Service::update_status();
+    }
 }
 
 bool Server::set_monitor_user(const string& username)

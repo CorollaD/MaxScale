@@ -272,7 +272,10 @@ public:
      *
      * @return The status bitmask of the target
      */
-    virtual uint64_t status() const = 0;
+    uint64_t status() const
+    {
+        return m_status.load(std::memory_order_relaxed);
+    }
 
     /**
      * Is the target still active
@@ -559,7 +562,8 @@ protected:
     // configuration is changed. Given the fact that the rank is not expected to change that often but it's
     // used very often in the routing, the extra effort of having to explicitly set it whenever the derived
     // class is configured is worth it.
-    std::atomic<int64_t> m_rank {RANK_PRIMARY};
+    std::atomic<int64_t>  m_rank {RANK_PRIMARY};
+    std::atomic<uint64_t> m_status {0};
 };
 
 class Error

@@ -2182,11 +2182,6 @@ void Service::unmark_for_wakeup(mxs::ClientConnection* session)
     m_sleeping_clients->erase(session);
 }
 
-bool Service::log_is_enabled(int level) const
-{
-    return m_log_level.load(std::memory_order_relaxed) & (1 << level);
-}
-
 namespace
 {
 

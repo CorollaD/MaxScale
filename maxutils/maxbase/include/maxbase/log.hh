@@ -45,6 +45,12 @@
 #endif
 
 extern int mxb_log_enabled_priorities;
+extern thread_local int mxb_log_local_priorities;
+
+// Bitmask that enables all possible log levels.
+constexpr static int MXB_ALL_LOG_LEVELS =
+    (1 << LOG_EMERG) | (1 << LOG_ALERT) | (1 << LOG_CRIT) | (1 << LOG_ERR)
+    | (1 << LOG_WARNING) | (1 << LOG_NOTICE) | (1 << LOG_INFO) | (1 << LOG_DEBUG);
 
 typedef enum mxb_log_augmentation_t
 {
@@ -94,12 +100,24 @@ const char* mxb_log_get_filename();
  */
 bool mxb_log_set_priority_enabled(int priority, bool enabled);
 
-bool mxb_log_get_session_trace();
-
 /**
  * Convert log level to string
  */
 const char* mxb_log_level_to_string(int level);
+
+/**
+ * Check if a bit is set in a log bitmask
+ *
+ * @param mask     Logging bitmask
+ * @param priority Priority to check
+ *
+ * @return True if the priority is set in the mask
+ */
+static inline bool mxb_check_log_mask(int mask, int priority)
+{
+    assert((priority & ~LOG_PRIMASK) == 0);
+    return mask & (1 << priority);
+}
 
 /**
  * Query whether a particular syslog priority is enabled.
@@ -113,8 +131,7 @@ const char* mxb_log_level_to_string(int level);
  */
 static inline bool mxb_log_is_priority_enabled(int priority)
 {
-    assert((priority & ~LOG_PRIMASK) == 0);
-    return ((mxb_log_enabled_priorities & (1 << priority)) != 0) || (priority == LOG_ALERT);
+    return mxb_check_log_mask(mxb_log_enabled_priorities, priority);
 }
 
 /**
@@ -188,14 +205,6 @@ void mxb_log_get_throttling(MXB_LOG_THROTTLING* throttling);
 void mxb_log_redirect_stdout(bool redirect);
 
 /**
- * Set session specific in-memory log
- *
- * @param enabled True or false to enable or disable session in-memory logging
- */
-void mxb_log_set_session_trace(bool enabled);
-
-
-/**
  * Log a message of a particular priority.
  *
  * @param priority One of the syslog constants: LOG_ERR, LOG_WARNING, ...
@@ -237,7 +246,11 @@ int mxb_log_fatal_error(const char* message);
  *
  * @return True if the message should be logged
  */
-bool mxb_log_should_log(int priority);
+static inline bool mxb_log_should_log(int priority)
+{
+    return mxb_check_log_mask(mxb_log_enabled_priorities | mxb_log_local_priorities, priority);
+}
+
 
 /**
  * Log an error, warning, notice, info, or debug  message.
@@ -557,6 +570,29 @@ private:
     const char* m_name;
 
     static thread_local LogScope* s_current_scope;
+};
+
+// RAII class for temporary enabling a log level. Used mainly to focus the log messages to a particular
+// session or a service.
+class LogLevel
+{
+public:
+    LogLevel(const LogLevel&) = delete;
+    LogLevel& operator=(const LogLevel&) = delete;
+
+    explicit LogLevel(int priorities)
+        : m_prev_level(mxb_log_local_priorities)
+    {
+        mxb_log_local_priorities = priorities;
+    }
+
+    ~LogLevel()
+    {
+        mxb_log_local_priorities = m_prev_level;
+    }
+
+private:
+    int m_prev_level;
 };
 
 // Class for redirecting the thread-local log message stream to a different handler. Only one of these should

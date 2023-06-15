@@ -246,15 +246,6 @@ public:
     virtual void unmark_for_wakeup(mxs::ClientConnection* client) = 0;
 
     /**
-     * Whether to log a message at a specific level for this service.
-     *
-     * @param level The log level to inspect
-     *
-     * @return True if the mesage should be logged
-     */
-    virtual bool log_is_enabled(int level) const = 0;
-
-    /**
      * Has a connection limit been reached?
      */
     bool has_too_many_connections() const
@@ -309,6 +300,10 @@ public:
         track_variables(variables);
     }
 
+    int log_level() const
+    {
+        return m_log_level.load(std::memory_order_relaxed);
+    }
 
 protected:
     friend class Configuration;
@@ -324,6 +319,8 @@ protected:
     }
 
     uint64_t m_capabilities {0};    /**< The capabilities of the service, @see enum routing_capability */
+
+    std::atomic<int> m_log_level {0};   /**< Enabled log levels for this service*/
 
     std::unique_ptr<mxs::Router> m_router;
 

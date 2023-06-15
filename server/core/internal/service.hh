@@ -271,8 +271,6 @@ public:
     void mark_for_wakeup(mxs::ClientConnection* session) override;
     void unmark_for_wakeup(mxs::ClientConnection* session) override;
 
-    bool log_is_enabled(int level) const override final;
-
     /**
      * Check server dependencies and update parameters.
      *
@@ -351,7 +349,6 @@ private:
     bool                    m_active {true};
     mxs::Monitor*           m_monitor {nullptr};    /**< A possibly associated monitor */
     std::vector<Service*>   m_parents;
-    std::atomic<int>        m_log_level {0};        /**< Enabled log levels for this service*/
     std::set<std::string>   m_protocols;
 
     // User account manager. Can only be set once.

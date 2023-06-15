@@ -79,7 +79,7 @@ void mxs_log_in_memory(std::string_view msg)
 bool mxs_should_log(int priority)
 {
     MXS_SESSION* session = session_get_current();
-    return session && session->log_is_enabled(priority);
+    return session && mxb_check_log_mask(session->log_level(), priority);
 }
 }
 

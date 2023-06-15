@@ -1304,6 +1304,7 @@ uint32_t DCB::process_events(uint32_t events)
 
 uint32_t DCB::event_handler(uint32_t events)
 {
+    mxb::LogLevel level(m_session->log_level());
     this_thread.current_dcb = this;
     uint32_t rv = process_events(events);
 
@@ -1951,6 +1952,8 @@ void BackendDCB::hangup_cb(const SERVER* server, const std::string& reason)
             {
                 if (!backend_dcb->m_hanged_up)
                 {
+
+                    mxb::LogLevel level(backend_dcb->session()->log_level());
                     this_thread.current_dcb = backend_dcb;
                     backend_dcb->m_is_fake_event = true;
                     backend_dcb->m_protocol->error(dcb, reason.c_str());

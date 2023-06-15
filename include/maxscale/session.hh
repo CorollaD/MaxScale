@@ -430,11 +430,11 @@ public:
     virtual bool remove_variable(const char* name, void** context) = 0;
 
     /**
-     * Check if log level has been explicitly enabled for this session
+     * Get log levels that have been explicitly enabled for this session
      *
-     * @return True if the log is enabled
+     * @return Enabled log levels
      */
-    bool log_is_enabled(int level) const;
+    int log_level() const;
 
     virtual void append_session_log(std::string_view msg) = 0;
     virtual void dump_session_log() = 0;

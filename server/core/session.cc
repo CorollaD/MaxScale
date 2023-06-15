@@ -62,6 +62,7 @@ struct
     uint32_t                  retain_last_statements;
     session_dump_statements_t dump_statements;
     uint32_t                  session_trace;
+    int                       log_mask = 0;
 } this_unit =
 {
     1,
@@ -474,12 +475,12 @@ json_t* Session::as_json_resource(const char* host, bool rdns) const
 
     json_t* params = json_object();
 #ifdef SS_DEBUG
-    json_object_set_new(params, "log_debug", json_boolean(log_is_enabled(LOG_DEBUG)));
+    json_object_set_new(params, "log_debug", json_boolean(mxb_check_log_mask(m_log_level, LOG_DEBUG)));
 #endif
-    json_object_set_new(params, "log_info", json_boolean(log_is_enabled(LOG_INFO)));
-    json_object_set_new(params, "log_notice", json_boolean(log_is_enabled(LOG_NOTICE)));
-    json_object_set_new(params, "log_warning", json_boolean(log_is_enabled(LOG_WARNING)));
-    json_object_set_new(params, "log_error", json_boolean(log_is_enabled(LOG_ERR)));
+    json_object_set_new(params, "log_info", json_boolean(mxb_check_log_mask(m_log_level, LOG_INFO)));
+    json_object_set_new(params, "log_notice", json_boolean(mxb_check_log_mask(m_log_level, LOG_NOTICE)));
+    json_object_set_new(params, "log_warning", json_boolean(mxb_check_log_mask(m_log_level, LOG_WARNING)));
+    json_object_set_new(params, "log_error", json_boolean(mxb_check_log_mask(m_log_level, LOG_ERR)));
     json_object_set_new(attr, CN_PARAMETERS, params);
 
     json_object_set_new(data, CN_ATTRIBUTES, attr);
@@ -661,6 +662,7 @@ const char* session_get_dump_statements_str()
 void session_set_session_trace(uint32_t value)
 {
     this_unit.session_trace = value;
+    this_unit.log_mask = value ? MXB_ALL_LOG_LEVELS : 0;
 }
 
 uint32_t session_get_session_trace()
@@ -1275,11 +1277,14 @@ bool Session::do_restart()
 
 void Session::append_session_log(std::string_view msg)
 {
-    m_log.push_front(std::string(msg));
-
-    if (m_log.size() >= this_unit.session_trace)
+    if (this_unit.session_trace)
     {
-        m_log.pop_back();
+        m_log.push_front(std::string(msg));
+
+        if (m_log.size() >= this_unit.session_trace)
+        {
+            m_log.pop_back();
+        }
     }
 }
 
@@ -1952,9 +1957,9 @@ MXS_SESSION::EventSubscriber::~EventSubscriber()
     m_session->remove_userdata_subscriber(this);
 }
 
-bool MXS_SESSION::log_is_enabled(int level) const
+int MXS_SESSION::log_level() const
 {
-    return m_log_level & (1 << level) || service->log_is_enabled(level);
+    return this_unit.log_mask | m_log_level | service->log_level();
 }
 
 void MXS_SESSION::set_host(string&& host)

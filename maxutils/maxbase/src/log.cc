@@ -39,7 +39,8 @@
 /**
  * Variable holding the enabled priorities information.
  */
-int mxb_log_enabled_priorities = (1 << LOG_ERR) | (1 << LOG_NOTICE) | (1 << LOG_WARNING);
+int mxb_log_enabled_priorities = (1 << LOG_ALERT) | (1 << LOG_ERR) | (1 << LOG_NOTICE) | (1 << LOG_WARNING);
+thread_local int mxb_log_local_priorities = 0;
 
 // Number of chars needed to represent a number.
 #define CALCLEN(i) ((size_t)(floor(log10(abs((int64_t)i))) + 1))
@@ -403,7 +404,6 @@ struct this_unit
     bool                       do_syslog {true};
     bool                       do_maxlog {true};
     bool                       redirect_stdout {false};
-    bool                       session_trace {false};
     MXB_LOG_THROTTLING         throttling {DEFAULT_LOG_THROTTLING};
     SLogger                    sLogger;
     SMessageRegistry           sMessage_registry;
@@ -420,7 +420,7 @@ inline bool should_level_be_logged(int level)
 
 inline bool is_session_tracing()
 {
-    return this_unit.session_trace && this_unit.in_memory_log;
+    return this_unit.in_memory_log;
 }
 
 class MessageRegistry
@@ -477,10 +477,6 @@ bool mxb_log_init(const char* ident,
                   mxb_should_log_t should_log)
 {
     assert(!mxb_log_inited());
-
-    mxb_assert_message(!this_unit.session_trace || in_memory_log,
-                       "If session tracing has already been enabled, then in_memory_log "
-                       "must be provided.");
 
     // Trigger calculation of buffer lengths.
     get_timestamp();
@@ -657,28 +653,6 @@ void mxb_log_get_throttling(MXB_LOG_THROTTLING* throttling)
 void mxb_log_redirect_stdout(bool redirect)
 {
     this_unit.redirect_stdout = redirect;
-}
-
-void mxb_log_set_session_trace(bool enabled)
-{
-    // It's always fine if session tracing is disabled or if the log
-    // has not yet been inited. But if the session tracing is enabled and
-    // the log has been inited, then an in_memory_log function *must*
-    // have been provided when the log was inited.
-    mxb_assert(!enabled || !mxb_log_inited() || this_unit.in_memory_log);
-    this_unit.session_trace = enabled;
-}
-
-bool mxb_log_get_session_trace()
-{
-    return this_unit.session_trace;
-}
-
-bool mxb_log_should_log(int priority)
-{
-    return mxb_log_is_priority_enabled(priority)
-           || this_unit.should_log(priority)
-           || mxb_log_get_session_trace();
 }
 
 bool mxb_log_rotate()

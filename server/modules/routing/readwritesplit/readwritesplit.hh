@@ -22,6 +22,7 @@
 #include <maxscale/ccdefs.hh>
 
 #include <maxbase/shared_mutex.hh>
+#include <maxbase/small_vector.hh>
 #include <maxscale/protocol/mariadb/module_names.hh>
 #include <maxscale/protocol/mariadb/mysql.hh>
 #include <maxscale/protocol/mariadb/rwbackend.hh>
@@ -239,10 +240,15 @@ static cfg::ParamBool s_reuse_ps(
     &s_spec, "reuse_prepared_statements", "Reuse identical prepared statements inside the same connection",
     false, cfg::Param::AT_RUNTIME);
 
+// The server selection requires some work memory for the candidate selection. The most common case is that
+// there is only a handful of candidates to pick from and allocating space for them on the heap is somewhat
+// wasteful. Currently 4 values are stored internally which should cover the more common cases.
+using Candidates = mxb::small_vector<mxs::RWBackend*, 4>;
+
 /** Function that returns a "score" for a server to enable comparison.
  *  Smaller numbers are better.
  */
-using BackendSelectFunction = mxs::RWBackend * (*)(mxs::PRWBackends& sBackends);
+using BackendSelectFunction = mxs::RWBackend * (*)(const Candidates& sBackends);
 using std::chrono::seconds;
 
 struct RWSConfig : public mxs::config::Configuration

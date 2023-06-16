@@ -26,6 +26,7 @@
 #include <maxscale/buffer.hh>
 #include <maxbase/average.hh>
 #include <maxbase/jansson.hh>
+#include <maxbase/small_vector.hh>
 
 class MXS_SESSION;
 
@@ -711,7 +712,7 @@ public:
     /**
      * The field counts for all received result sets
      */
-    const std::vector<uint64_t>& field_counts() const;
+    const mxb::small_vector<uint64_t>& field_counts() const;
 
     /**
      * The server-generated ID for a prepared statement if one was created
@@ -787,20 +788,20 @@ public:
     }
 
 private:
-    uint8_t               m_command {0};
-    ReplyState            m_reply_state {ReplyState::DONE};
-    Error                 m_error;
-    uint64_t              m_row_count {0};
-    uint64_t              m_size {0};
-    uint64_t              m_upload_size {0};
-    uint32_t              m_generated_id {0};
-    uint16_t              m_param_count {0};
-    uint16_t              m_num_warnings {0};
-    uint32_t              m_server_status {NO_SERVER_STATUS};
-    bool                  m_is_ok {false};
-    bool                  m_multiresult {false};
-    std::vector<uint64_t> m_field_counts;
+    uint8_t    m_command {0};
+    ReplyState m_reply_state {ReplyState::DONE};
+    Error      m_error;
+    uint64_t   m_row_count {0};
+    uint64_t   m_size {0};
+    uint64_t   m_upload_size {0};
+    uint32_t   m_generated_id {0};
+    uint16_t   m_param_count {0};
+    uint16_t   m_num_warnings {0};
+    uint32_t   m_server_status {NO_SERVER_STATUS};
+    bool       m_is_ok {false};
+    bool       m_multiresult {false};
 
+    mxb::small_vector<uint64_t>                     m_field_counts;
     std::map<std::string, std::string, std::less<>> m_variables;
     std::vector<std::vector<std::string_view>>      m_row_data;
 };
@@ -939,7 +940,7 @@ inline uint64_t Reply::upload_size() const
     return m_upload_size;
 }
 
-inline const std::vector<uint64_t>& Reply::field_counts() const
+inline const mxb::small_vector<uint64_t>& Reply::field_counts() const
 {
     return m_field_counts;
 }

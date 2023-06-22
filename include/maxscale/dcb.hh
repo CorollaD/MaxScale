@@ -571,6 +571,11 @@ public:
 
     virtual mxb::Json get_memory_statistics() const;
 
+    uint64_t high_water() const
+    {
+        return m_high_water;
+    }
+
 protected:
     DCB(int fd,
         const sockaddr_storage& ip,

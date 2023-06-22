@@ -674,7 +674,7 @@ void MariaDBBackendConnection::normal_read()
         || m_collect_result;
 
     // Limit the amount of data read so that client dcb writeq won't heavily exceed writeq_high_water.
-    auto high_water_limit = config_writeq_high_water();
+    auto high_water_limit = m_dcb->high_water();
 
     size_t bytes_to_read = 0;
     if (high_water_limit > 0)

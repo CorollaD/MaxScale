@@ -16,6 +16,7 @@
 #include <maxscale/ccdefs.hh>
 #include <string>
 #include <memory>
+#include <vector>
 #include <unordered_map>
 #include <unordered_set>
 #include <maxscale/hint.hh>
@@ -34,27 +35,9 @@ class QueryClassifier
 
 public:
 
-    /** States of a LOAD DATA LOCAL INFILE */
-    enum load_data_state_t
-    {
-        LOAD_DATA_INACTIVE,         /**< Not active */
-        LOAD_DATA_ACTIVE,           /**< Load is active */
-    };
-
     class RouteInfo
     {
     public:
-        RouteInfo(const RouteInfo&) = default;
-        RouteInfo& operator=(const RouteInfo&) = default;
-
-        RouteInfo(RouteInfo&&) = default;
-        RouteInfo& operator=(RouteInfo&&) = default;
-
-        RouteInfo(const mxs::Parser* pParser)
-            : m_pParser(pParser)
-        {
-        }
-
         /**
          * Get the current routing target
          */
@@ -104,29 +87,11 @@ public:
         }
 
         /**
-         * Check if the server will generate a response for this packet
+         * Whetehr a LOAD DATA LOCAL INFILE is in progress
          */
-        bool expecting_response() const
+        bool load_data_active() const
         {
-            return load_data_state() == LOAD_DATA_INACTIVE
-                   && !multi_part_packet()
-                   && m_pParser->command_will_respond(command());
-        }
-
-        /**
-         * Get the state of the LOAD DATA LOCAL INFILE command
-         */
-        load_data_state_t load_data_state() const
-        {
-            return m_load_data_state;
-        }
-
-        /**
-         * Check if a LOAD DATA LOCAL INFILE is in progress
-         */
-        bool loading_data() const
-        {
-            return m_load_data_state != LOAD_DATA_INACTIVE;
+            return m_load_data_active;
         }
 
         /**
@@ -149,26 +114,6 @@ public:
         bool is_ps_continuation() const
         {
             return m_ps_continuation;
-        }
-
-        /**
-         * Check if temporary tables have been created
-         *
-         * @return True if temporary tables have been created
-         */
-        bool have_tmp_tables() const
-        {
-            return !m_tmp_tables.empty();
-        }
-
-        /**
-         * Check if the table is a temporary table
-         *
-         * @return True if the table in question is a temporary table
-         */
-        bool is_tmp_table(const std::string& table)
-        {
-            return m_tmp_tables.find(table) != m_tmp_tables.end();
         }
 
         //
@@ -213,9 +158,9 @@ public:
             m_next_multi_part_packet = multi_part_packet;
         }
 
-        void set_load_data_state(load_data_state_t state)
+        void set_load_data_active(bool active)
         {
-            m_load_data_state = state;
+            m_load_data_active = active;
         }
 
         void set_trx_still_read_only(bool value)
@@ -228,36 +173,16 @@ public:
             m_ps_continuation = value;
         }
 
-        void add_tmp_table(const std::string& table)
-        {
-            m_tmp_tables.insert(table);
-        }
-
-        void remove_tmp_table(const std::string& table)
-        {
-            m_tmp_tables.erase(table);
-        }
-
-        void clear_tmp_tables()
-        {
-            m_tmp_tables.clear();
-        }
-
     private:
-
-        using TableSet = std::unordered_set<std::string>;
-
-        const mxs::Parser* m_pParser;
-        uint32_t           m_target = QueryClassifier::TARGET_UNDEFINED;
-        uint8_t            m_command = 0xff;
-        uint32_t           m_type_mask = mxs::sql::TYPE_UNKNOWN;
-        uint32_t           m_stmt_id = 0;
-        load_data_state_t  m_load_data_state = LOAD_DATA_INACTIVE;
-        bool               m_multi_part_packet = false;
-        bool               m_next_multi_part_packet = false;
-        bool               m_trx_is_read_only = true;
-        bool               m_ps_continuation = false;
-        TableSet           m_tmp_tables;
+        uint32_t m_type_mask = mxs::sql::TYPE_UNKNOWN;
+        uint32_t m_stmt_id = 0;
+        uint8_t  m_target = QueryClassifier::TARGET_UNDEFINED;
+        uint8_t  m_command = 0xff;
+        bool     m_load_data_active = false;
+        bool     m_multi_part_packet = false;
+        bool     m_next_multi_part_packet = false;
+        bool     m_trx_is_read_only = true;
+        bool     m_ps_continuation = false;
     };
 
     class Handler
@@ -270,7 +195,7 @@ public:
     };
 
     // NOTE: For the time being these must be exactly like the ones in readwritesplit.hh
-    enum
+    enum : uint8_t
     {
         TARGET_UNDEFINED    = 0x00,
         TARGET_MASTER       = 0x01,
@@ -374,7 +299,27 @@ public:
 
     void master_replaced()
     {
-        m_route_info.clear_tmp_tables();
+        m_tmp_tables.clear();
+    }
+
+    /**
+     * Check if temporary tables have been created
+     *
+     * @return True if temporary tables have been created
+     */
+    bool have_tmp_tables() const
+    {
+        return !m_tmp_tables.empty();
+    }
+
+    /**
+     * Check if the table is a temporary table
+     *
+     * @return True if the table in question is a temporary table
+     */
+    bool is_tmp_table(const std::string& table)
+    {
+        return m_tmp_tables.find(table) != m_tmp_tables.end();
     }
 
     /**
@@ -453,10 +398,7 @@ public:
      *
      * @note Can only be called after a call to update_route_info() and must only be called once.
      */
-    void revert_update()
-    {
-        m_route_info = m_prev_route_info;
-    }
+    void revert_update();
 
     /**
      * Set verbose mode
@@ -526,6 +468,23 @@ private:
     static bool find_table(QueryClassifier& qc, const std::string& table);
     static bool delete_table(QueryClassifier& qc, const std::string& table);
 
+    enum Diff
+    {
+        ADD,
+        REMOVE,
+    };
+
+    void add_tmp_table(const std::string& table)
+    {
+        m_tmp_tables.insert(table);
+        m_delta.emplace_back(ADD, table);
+    }
+
+    void remove_tmp_table(const std::string& table)
+    {
+        m_tmp_tables.erase(table);
+        m_delta.emplace_back(REMOVE, table);
+    }
 
 private:
     mxs::Parser& m_parser;
@@ -537,6 +496,13 @@ private:
     RouteInfo    m_route_info;
     RouteInfo    m_prev_route_info; // Previous state, used for rollback of state
     bool         m_verbose = true;  // Whether to log info level messages for classified queries
+
+    // The set of temporary tables that have been created
+    std::set<std::string> m_tmp_tables;
+
+    // Temporary work buffer used to record the additions and removals of temporary tables. They are used in
+    // revert_update() to roll back a change.
+    std::vector<std::pair<Diff, std::string>> m_delta;
 
     uint32_t m_prev_ps_id = 0;      /**< For direct PS execution, storest latest prepared PS ID.
                                      * https://mariadb.com/kb/en/library/com_stmt_execute/#statement-id **/

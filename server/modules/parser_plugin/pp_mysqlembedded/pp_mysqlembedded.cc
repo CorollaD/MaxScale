@@ -4173,6 +4173,12 @@ public:
         return rv;
     }
 
+    bool is_multi_stmt(const GWBUF& stmt) const override
+    {
+        // Not supported
+        return false;
+    }
+
     void set_sql_mode(Parser::SqlMode sql_mode) override
     {
         pp_mysql_set_sql_mode(sql_mode);

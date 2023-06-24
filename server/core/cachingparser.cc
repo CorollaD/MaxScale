@@ -392,10 +392,11 @@ public:
         : m_parser(*pParser)
         , m_stmt(*pStmt)
     {
-        auto pInfo = m_stmt.get_protocol_info().get();
-        m_info_size_before = pInfo ? pInfo->size() : 0;
-
-        if (use_cached_result() && has_not_been_parsed(m_stmt))
+        if (const auto& info = m_stmt.get_protocol_info())
+        {
+            m_info_size_before = info->size();
+        }
+        else if (use_cached_result())
         {
             // We generate the canonical explicitly, because now we want the key that
             // allows us to look up whether the parsing info already exists. Besides,
@@ -417,38 +418,35 @@ public:
                 m_info_size_before = sInfo->size();
                 const_cast<GWBUF&>(m_stmt).set_protocol_info(std::move(sInfo));
             }
-            else
+            else if (!this_thread.canonical.empty())
             {
-                // If m_canonical is empty, it signals that nothing needs to be added in the destructor. If it
-                // is not empty, the result should be inserted into the cache.
-                m_canonical = this_thread.canonical;
+                // Add this to the cache
+                m_info_size_before = ADD_TO_CACHE;
             }
         }
     }
 
     ~QCInfoCacheScope()
     {
-        bool exclude = exclude_from_cache();
+        const auto& sInfo = m_stmt.get_protocol_info();
 
-        if (!m_canonical.empty() && !exclude)
-        {   // Cache for the first time
-            auto sInfo = m_stmt.get_protocol_info();
-            mxb_assert(sInfo);
-
-            // Now from QC and this will have the trailing ":P" in case the GWBUF
-            // contained a COM_STMT_PREPARE.
-            std::string_view canonical = m_parser.plugin().get_canonical(sInfo.get());
-            mxb_assert(m_canonical == canonical);
-
-            this_thread.pInfo_cache->insert(&m_parser, canonical, std::move(sInfo));
-        }
-        else if (!exclude)
-        {   // The size might have changed
-            auto pInfo = m_stmt.get_protocol_info().get();
-            auto info_size_after = pInfo ? pInfo->size() : 0;
-
-            if (m_info_size_before != info_size_after)
+        if (sInfo && sInfo->cacheable())
+        {
+            if (m_info_size_before == ADD_TO_CACHE)
             {
+                // Cache for the first time
+                mxb_assert(sInfo);
+
+                // Now from QC and this will have the trailing ":P" in case the GWBUF
+                // contained a COM_STMT_PREPARE.
+                std::string_view canonical = m_parser.plugin().get_canonical(sInfo.get());
+                mxb_assert(this_thread.canonical == canonical);
+
+                this_thread.pInfo_cache->insert(&m_parser, canonical, std::move(sInfo));
+            }
+            else if (auto info_size_after = sInfo->size(); m_info_size_before != info_size_after)
+            {
+                // The size has changed
                 mxb_assert(m_info_size_before < info_size_after);
                 this_thread.pInfo_cache->update_total_size(info_size_after - m_info_size_before);
             }
@@ -456,20 +454,13 @@ public:
     }
 
 private:
+    // The constant that's stored in m_info_size_before when the entry should be inserted into the cache.
+    static constexpr size_t ADD_TO_CACHE = std::numeric_limits<size_t>::max();
+
     mxs::Parser& m_parser;
     const GWBUF& m_stmt;
-    std::string  m_canonical;
-    size_t       m_info_size_before;
-
-    bool exclude_from_cache() const
-    {
-        constexpr const int is_autocommit =
-            mxs::sql::TYPE_ENABLE_AUTOCOMMIT | mxs::sql::TYPE_DISABLE_AUTOCOMMIT;
-        uint32_t type_mask = m_parser.get_type_mask(m_stmt);
-        return (type_mask & is_autocommit) != 0;
-    }
+    size_t       m_info_size_before {0};
 };
-
 }
 
 namespace maxscale

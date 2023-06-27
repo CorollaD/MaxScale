@@ -120,6 +120,55 @@ void skip_encoded_str(Iter& it)
     auto len = get_encoded_int(it);
     it += len;
 }
+
+inline bool get_packet(const uint8_t* it, const uint8_t* end, uint32_t* len_out)
+{
+    if (it + MYSQL_HEADER_LEN + 1 > end)
+    {
+        return false;
+    }
+
+    uint32_t len = mariadb::get_header(it).pl_length;
+    *len_out = len;
+    return it + MYSQL_HEADER_LEN + len <= end;
+}
+
+std::pair<Iter, uint64_t> fast_resultset_columns(Iter it, const Iter end, uint64_t num_coldefs)
+{
+    uint32_t len;
+
+    // The column definition packets currently always fit into a single packet.
+    while (num_coldefs && get_packet(it, end, &len))
+    {
+        it += MYSQL_HEADER_LEN + len;
+        --num_coldefs;
+    }
+
+    return {it, num_coldefs};
+}
+
+std::pair<Iter, uint64_t> fast_resultset_rows(Iter it, const Iter end)
+{
+    uint32_t len;
+    uint64_t rows = 0;
+
+    // This is a smaller loop that iterates over rows that fit into a single packet. If a row that's split
+    // across multiple packets is encountered, a slower path is taken which handles the more complex cases.
+    // A small loop with simpler code should help the CPU perform better.
+    while (get_packet(it, end, &len)
+            // The EOF packet starts with 0xFE and ERR packet starts with 0xFF. If first byte of the packet is
+            // below this value, it cannot be the final packet of the resultset. The only other case where a
+            // resultset packet can start with a 0xFE is when a field length must be expressed with 64 bits
+            // which in turn causes the single-packet check to fail (i.e. length exceeds 0xFFFFFF).
+           && it[MYSQL_HEADER_LEN] < MYSQL_REPLY_EOF
+           && len != MYSQL_PACKET_LENGTH_MAX)
+    {
+        ++rows;
+        it += MYSQL_HEADER_LEN + len;
+    }
+
+    return {it, rows};
+}
 }
 
 /**
@@ -1425,23 +1474,6 @@ json_t* MariaDBBackendConnection::diagnostics() const
 }
 
 /**
- * Process a reply from a backend server. This method collects all complete packets and
- * updates the internal response state.
- *
- * @param buffer Buffer containing the raw response. Any partial packets will be left in this buffer.
- * @return All complete packets that were in `buffer`
- */
-GWBUF MariaDBBackendConnection::track_response(GWBUF& buffer)
-{
-    GWBUF rval = process_packets(buffer);
-    if (!rval.empty())
-    {
-        m_reply.add_bytes(rval.length());
-    }
-    return rval;
-}
-
-/**
  * Read the backend server MySQL handshake
  *
  * @return true on success, false on failure
@@ -1807,33 +1839,48 @@ uint32_t MariaDBBackendConnection::create_capabilities(bool with_ssl, uint64_t c
     return final_capabilities;
 }
 
-GWBUF MariaDBBackendConnection::process_packets(GWBUF& result)
+GWBUF MariaDBBackendConnection::track_response(GWBUF& result)
 {
     GWBUF& buffer = result;
     auto it = buffer.begin();
-    size_t total_bytes = buffer.length();
-    size_t bytes_used = 0;
+    const auto buf_end = buffer.end();
 
-    while (it != buffer.end())
+    while (it != buf_end)
     {
-        size_t bytes_left = total_bytes - bytes_used;
-        if (bytes_left < MYSQL_HEADER_LEN)
+        if (!m_collect_rows && !m_skip_next)
         {
-            // Partial header
+            // Use optimized versions for processing resultsets when row values are not being collected and
+            // when the row values are not split across multiple packets.
+
+            if (m_reply.state() == ReplyState::RSET_COLDEF)
+            {
+                std::tie(it, m_num_coldefs) = fast_resultset_columns(it, buf_end, m_num_coldefs);
+
+                if (m_num_coldefs == 0)
+                {
+                    m_reply.set_reply_state(use_deprecate_eof() ?
+                                            ReplyState::RSET_ROWS : ReplyState::RSET_COLDEF_EOF);
+                }
+            }
+
+            if (m_reply.state() == ReplyState::RSET_ROWS)
+            {
+                auto [next, rows] = fast_resultset_rows(it, buf_end);
+                it = next;
+                m_reply.add_rows(rows);
+            }
+        }
+
+        uint32_t len;
+
+        if (!get_packet(it, buf_end, &len))
+        {
+            // Partial packet
             break;
         }
 
-        // Extract packet length
-        uint32_t len = mariadb::get_header(it).pl_length;
-        if (bytes_left < len + MYSQL_HEADER_LEN)
-        {
-            // Partial packet payload
-            break;
-        }
-
-        bytes_used += len + MYSQL_HEADER_LEN;
         it += MYSQL_HEADER_LEN;
-        mxb_assert(it != buffer.end());
+        mxb_assert(it != buf_end);
         auto end = it + len;
 
         // Ignore the tail end of a large packet. Only resultsets can generate packets this large
@@ -1854,7 +1901,9 @@ GWBUF MariaDBBackendConnection::process_packets(GWBUF& result)
         }
     }
 
-    return result.split(bytes_used);
+    size_t bytes_processed = std::distance(buffer.begin(), it);
+    m_reply.add_bytes(bytes_processed);
+    return result.split(bytes_processed);
 }
 
 void MariaDBBackendConnection::process_one_packet(Iter it, Iter end, uint32_t len)

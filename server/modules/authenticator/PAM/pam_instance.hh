@@ -37,7 +37,6 @@ public:
 
     mariadb::SClientAuth  create_client_authenticator() override;
     mariadb::SBackendAuth create_backend_authenticator(mariadb::BackendAuthData& auth_data) override;
-    mariadb::AuthByteVec  generate_token(const std::string& password) override;
 
 private:
     using AuthMode = mxb::pam::AuthMode;

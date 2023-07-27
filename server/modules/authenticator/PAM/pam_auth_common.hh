@@ -44,7 +44,7 @@ enum class BackendMapping
 {
     NONE,       /**< No mapping, default */
     MARIADB,    /**< Mapped to a MariaDB user */
-    MARIADB_PASSTHROUGH  /**< Do not check user account or password, defer to backend */
+    CLEARPW_PASSTHROUGH  /**< Do not check user account or password, defer to backend */
 };
 
 struct PasswordHash

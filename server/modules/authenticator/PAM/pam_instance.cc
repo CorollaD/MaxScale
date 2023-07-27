@@ -37,7 +37,7 @@ const string pam_mode_pw_2fa = "password_2FA";
 const string opt_be_map = "pam_backend_mapping";
 const string be_map_none = "none";
 const string be_map_mariadb = "mariadb";
-const string be_map_mariadbpt = "mariadb_passthrough";
+const string be_map_passthrough = "clearpw_passthrough";
 
 const string opt_pam_user_map = "pam_mapped_pw_file";
 
@@ -132,9 +132,9 @@ PamAuthenticatorModule* PamAuthenticatorModule::create(mxs::ConfigParameters* op
         {
             settings.be_mapping = BackendMapping::MARIADB;
         }
-        else if (user_be_map == be_map_mariadbpt)
+        else if (user_be_map == be_map_passthrough)
         {
-            settings.be_mapping = BackendMapping::MARIADB_PASSTHROUGH;
+            settings.be_mapping = BackendMapping::CLEARPW_PASSTHROUGH;
         }
         else if (user_be_map != be_map_none)
         {
@@ -172,7 +172,7 @@ PamAuthenticatorModule* PamAuthenticatorModule::create(mxs::ConfigParameters* op
 uint64_t PamAuthenticatorModule::capabilities() const
 {
     uint64_t rval = CAP_ANON_USER;
-    if (m_settings.be_mapping == BackendMapping::MARIADB_PASSTHROUGH)
+    if (m_settings.be_mapping == BackendMapping::CLEARPW_PASSTHROUGH)
     {
         rval |= CAP_PASSTHROUGH;
     }
@@ -196,11 +196,11 @@ PamAuthenticatorModule::create_backend_authenticator(mariadb::BackendAuthData& a
     switch (m_settings.be_mapping)
     {
     case BackendMapping::NONE:
+    case BackendMapping::CLEARPW_PASSTHROUGH:
         rval = std::make_unique<PamBackendAuthenticator>(auth_data, m_settings.mode);
         break;
 
     case BackendMapping::MARIADB:
-    case BackendMapping::MARIADB_PASSTHROUGH:
         rval = std::make_unique<MariaDBBackendSession>(auth_data);
         break;
     }
@@ -222,27 +222,6 @@ PamAuthenticatorModule::PamAuthenticatorModule(AuthSettings& settings, PasswordM
     : m_settings(settings)
     , m_backend_pwds(move(backend_pwds))
 {
-}
-
-mariadb::AuthByteVec PamAuthenticatorModule::generate_token(const string& password)
-{
-    mariadb::AuthByteVec rval;
-    if (m_settings.be_mapping == BackendMapping::MARIADB_PASSTHROUGH)
-    {
-        // In this case the client sent a cleartext password. Convert it to SHA1(password) for standard auth.
-        if (!password.empty())
-        {
-            rval.resize(SHA_DIGEST_LENGTH);
-            auto pwlen = strlen(password.c_str());
-            gw_sha1_str((const uint8_t*)password.c_str(), pwlen, rval.data());
-        }
-    }
-    else
-    {
-        // Return password as is. Works with normal pam authentication.
-        rval.assign(password.begin(), password.end());
-    }
-    return rval;
 }
 
 extern "C"

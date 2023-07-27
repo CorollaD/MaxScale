@@ -150,7 +150,7 @@ AuthRes PamClientAuthenticator::authenticate(MYSQL_session* session, Authenticat
 {
     using mxb::pam::AuthResult;
     mxb_assert(m_state == State::PW_RECEIVED);
-    mxb_assert(m_settings.be_mapping != BackendMapping::MARIADB_PASSTHROUGH);
+    mxb_assert(m_settings.be_mapping != BackendMapping::CLEARPW_PASSTHROUGH);
     bool twofa = (m_settings.mode == AuthMode::PW_2FA);
     bool map_to_mariadbauth = (m_settings.be_mapping == BackendMapping::MARIADB);
     const auto& entry = auth_data.user_entry.entry;

@@ -3279,6 +3279,12 @@ void MariaDBClientConnection::assign_backend_authenticator(mariadb::Authenticati
     {
         // No mapping, use client authenticator.
         auth_data.be_auth_module = auth_data.client_auth_module;
+    }
+
+    if (!user_is_mapped)
+    {
+        // No mapping, use client authenticator.
+        auth_data.be_auth_module = auth_data.client_auth_module;
         auto& sett = m_session_data->user_search_settings.listener;
         if (!sett.check_password || sett.passthrough_auth)
         {

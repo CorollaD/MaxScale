@@ -323,17 +323,27 @@ MariaDBBackendSession::exchange(GWBUF&& input)
         {
             auto parse_res = mariadb::parse_auth_switch_request(input);
             // The server scramble should be null-terminated, don't copy the null.
-            if (parse_res.success && parse_res.plugin_data.size() >= MYSQL_SCRAMBLE_LEN)
+            if (parse_res.success)
             {
-                // Expecting the server to only ask for native password plugin.
-                if (parse_res.plugin_name == DEFAULT_MYSQL_AUTH_PLUGIN)
+                if (parse_res.plugin_name == native_plugin)
                 {
-                    // Looks ok. The server has sent a new scramble. Save it and generate a response.
-                    memcpy(m_shared_data.scramble, parse_res.plugin_data.data(), MYSQL_SCRAMBLE_LEN);
-                    auto old_seqno = MYSQL_GET_PACKET_NO(input.data());
-                    rval.output = generate_auth_response(old_seqno + 1);
-                    m_state = State::PW_SENT;
-                    rval.success = true;
+                    if (parse_res.plugin_data.size() >= MYSQL_SCRAMBLE_LEN)
+                    {
+                        // Looks ok. The server has sent a new scramble. Save it and generate a response.
+                        memcpy(m_shared_data.scramble, parse_res.plugin_data.data(), MYSQL_SCRAMBLE_LEN);
+                        auto old_seqno = MYSQL_GET_PACKET_NO(input.data());
+                        rval.output = generate_auth_response(old_seqno + 1);
+                        m_state = State::PW_SENT;
+                        rval.success = true;
+                    }
+                    else
+                    {
+                        MXB_ERROR(MALFORMED_AUTH_SWITCH, m_shared_data.servername);
+                    }
+                }
+                else if (parse_res.plugin_name == clearpw_plugin)
+                {
+
                 }
                 else
                 {

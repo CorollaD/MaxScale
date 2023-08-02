@@ -72,7 +72,8 @@ public:
     AuthRes exchange(GWBUF&& input) override;
 
 private:
-    GWBUF generate_auth_response(uint8_t seqno);
+    GWBUF gen_native_auth_response(const uint8_t* pw_sha1, uint8_t seqno);
+    GWBUF generate_clearpw_response(uint8_t seqno);
 
     /** Authentication states */
     enum class State

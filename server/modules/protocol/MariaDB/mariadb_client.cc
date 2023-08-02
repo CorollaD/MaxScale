@@ -3279,17 +3279,16 @@ void MariaDBClientConnection::assign_backend_authenticator(mariadb::Authenticati
     {
         // No mapping, use client authenticator.
         auth_data.be_auth_module = auth_data.client_auth_module;
-    }
-
-    if (!user_is_mapped)
-    {
-        // No mapping, use client authenticator.
-        auth_data.be_auth_module = auth_data.client_auth_module;
         auto& sett = m_session_data->user_search_settings.listener;
-        if (!sett.check_password || sett.passthrough_auth)
+        // If passthrough auth or skip auth is on, authenticate() was not ran and backend token
+        // is empty.
+        if (sett.passthrough_auth)
         {
-            // In this case the authenticate-function was not ran so backend token was not set. Generate
-            // the token from client token.
+            // Do not set backend token, generate it on the fly depending on what backend asks for.
+        }
+        else if (!sett.check_password)
+        {
+            // Generate the token from client token.
             auto ptr = (const char*)auth_data.client_token.data();
             auto len = auth_data.client_token.size();
             string temp(ptr, len);

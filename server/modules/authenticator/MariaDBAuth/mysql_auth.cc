@@ -192,18 +192,18 @@ MariaDBClientAuthenticator::exchange(GWBUF&& buf, MYSQL_session* session, Authen
             // Client is replying to an AuthSwitch request. The packet should contain
             // the authentication token or be empty if trying to log in without pw.
             auto buflen = buf.length();
-            auto& auth_token = auth_data.client_token;
+            auto& token_storage = auth_data.client_token;
             int tok_len = buflen - MYSQL_HEADER_LEN;
             if (tok_len > 0)
             {
-                auth_token.resize(tok_len);
-                buf.copy_data(MYSQL_HEADER_LEN, tok_len, auth_token.data());
-                auth_data.client_token_type = m_passthrough_mode ? TokenType::CLEARPW : TokenType::PW_HASH;
+                token_storage.resize(tok_len);
+                buf.copy_data(MYSQL_HEADER_LEN, tok_len, token_storage.data());
             }
             else
             {
-                auth_token.clear();     // authenticating without password
+                token_storage.clear();     // authenticating without password
             }
+            auth_data.client_token_type = m_passthrough_mode ? TokenType::CLEARPW : TokenType::PW_HASH;
 
             // Assume that correct authenticator is now used. If this is not the case,
             // authentication will fail.
@@ -213,7 +213,7 @@ MariaDBClientAuthenticator::exchange(GWBUF&& buf, MYSQL_session* session, Authen
         break;
 
     default:
-        mxb_assert(!true);
+        mxb_assert(!true),;
         break;
     }
 
@@ -322,19 +322,37 @@ MariaDBBackendSession::exchange(GWBUF&& input)
     case State::EXPECT_AUTHSWITCH:
         {
             auto parse_res = mariadb::parse_auth_switch_request(input);
-            // The server scramble should be null-terminated, don't copy the null.
             if (parse_res.success)
             {
+                auto new_seqno = MYSQL_GET_PACKET_NO(input.data()) + 1;
+                const auto& auth_data = *m_shared_data.client_data->auth_data;
+                bool have_clearpw = auth_data.client_token_type == TokenType::CLEARPW;
+
                 if (parse_res.plugin_name == native_plugin)
                 {
+                    // The server scramble should be null-terminated, don't copy the null.
                     if (parse_res.plugin_data.size() >= MYSQL_SCRAMBLE_LEN)
                     {
                         // Looks ok. The server has sent a new scramble. Save it and generate a response.
                         memcpy(m_shared_data.scramble, parse_res.plugin_data.data(), MYSQL_SCRAMBLE_LEN);
-                        auto old_seqno = MYSQL_GET_PACKET_NO(input.data());
-                        rval.output = generate_auth_response(old_seqno + 1);
-                        m_state = State::PW_SENT;
+                        uint8_t pw_sha1_tmp[SHA_DIGEST_LENGTH];
+                        const uint8_t* pw_sha1 = nullptr;
+                        if (have_clearpw)
+                        {
+                            if (auth_data.client_token.empty())
+                            {
+                                pw_sha1 =
+                            }
+                            gw_sha1_str()
+                            pw_sha1 = pw_sha1_tmp;
+                        }
+                        else if (auth_data.backend_token.size() == SHA_DIGEST_LENGTH)
+                        {
+                            pw_sha1 = auth_data.backend_token.data();
+                        }
+                        rval.output = gen_native_auth_response(new_seqno);
                         rval.success = true;
+                        m_state = State::PW_SENT;
                     }
                     else
                     {
@@ -343,7 +361,12 @@ MariaDBBackendSession::exchange(GWBUF&& input)
                 }
                 else if (parse_res.plugin_name == clearpw_plugin)
                 {
-
+                    // Can answer this if client token is cleartext pw.
+                    if (rval.output = generate_clearpw_response(new_seqno); !rval.output.empty())
+                    {
+                        rval.success = true;
+                        m_state = State::PW_SENT;
+                    }
                 }
                 else
                 {
@@ -372,18 +395,41 @@ MariaDBBackendSession::exchange(GWBUF&& input)
     return rval;
 }
 
-GWBUF MariaDBBackendSession::generate_auth_response(uint8_t seqno)
+GWBUF MariaDBBackendSession::gen_native_auth_response(const uint8_t* pw_sha1, uint8_t seqno)
 {
     size_t pload_len = SHA_DIGEST_LENGTH;
     size_t total_len = MYSQL_HEADER_LEN + pload_len;
     GWBUF rval(total_len);
     auto ptr = mariadb::write_header(rval.data(), pload_len, seqno);
-    auto& sha_pw = m_shared_data.client_data->auth_data->backend_token;
-    const uint8_t* curr_passwd = sha_pw.empty() ? null_client_sha1 : sha_pw.data();
+    const uint8_t* curr_passwd = pw_sha1 ? pw_sha1 : null_client_sha1;
     mxs_mysql_calculate_hash(m_shared_data.scramble, curr_passwd, ptr);
     ptr += SHA_DIGEST_LENGTH;
     mxb_assert(ptr - rval.data() == (ptrdiff_t)total_len);
     return rval;
+}
+
+GWBUF MariaDBBackendSession::generate_clearpw_response(uint8_t seqno)
+{
+    GWBUF rval;
+    const auto& auth_data = *m_shared_data.client_data->auth_data;
+    if (auth_data.client_token_type == TokenType::CLEARPW)
+    {
+        size_t tok_len = auth_data.client_token.size();
+        size_t total_len = MYSQL_HEADER_LEN + tok_len;
+        auto [begin, _] = rval.prepare_to_write(total_len);
+        auto ptr = mariadb::write_header(begin, tok_len, seqno);
+        if (tok_len > 0)
+        {
+            ptr = mariadb::copy_bytes(ptr, auth_data.client_token.data(), tok_len);
+        }
+        rval.write_complete(ptr - begin);
+    }
+    else
+    {
+        MXB_ERROR(WRONG_PLUGIN_REQ, m_shared_data.servername, clearpw_plugin.c_str(),
+                  m_shared_data.client_data->user_and_host().c_str(), native_plugin.c_str());
+    }
+    return GWBUF();
 }
 
 MariaDBBackendSession::MariaDBBackendSession(mariadb::BackendAuthData& shared_data)

@@ -158,6 +158,23 @@ MariaDBClientAuthenticator::exchange(GWBUF&& buf, MYSQL_session* session, Authen
     using ExchRes = mariadb::ClientAuthenticator::ExchRes;
     ExchRes rval;
 
+    auto handle_correct_plugin = [this, &auth_data, &rval]() {
+        auth_data.client_token_type = m_passthrough_mode ? TokenType::CLEARPW : TokenType::PW_HASH;
+        if (m_passthrough_mode)
+        {
+            // Best to calculate sha1(pw) even before we know what backend will ask for, so that
+            // protocol code can send the hash in the handshake response.
+            // TODO: add protocol-level support for detecting/sending authenticator-aware handshare resp.
+            const auto& pw = auth_data.client_token;
+            auto ptr = (const char*)pw.data();
+            auto len = strnlen(ptr, pw.size());
+            string temp(ptr, len);
+            auth_data.backend_token = auth_data.client_auth_module->generate_token(temp);
+        }
+        rval.status = ExchRes::Status::READY;
+        m_state = State::CHECK_TOKEN;
+    };
+
     switch (m_state)
     {
     case State::INIT:
@@ -172,9 +189,7 @@ MariaDBClientAuthenticator::exchange(GWBUF&& buf, MYSQL_session* session, Authen
         if (correct_plugin)
         {
             // Correct plugin, token should have been read by protocol code.
-            auth_data.client_token_type = m_passthrough_mode ? TokenType::CLEARPW : TokenType::PW_HASH;
-            rval.status = ExchRes::Status::READY;
-            m_state = State::CHECK_TOKEN;
+            handle_correct_plugin();
         }
         else
         {
@@ -191,9 +206,8 @@ MariaDBClientAuthenticator::exchange(GWBUF&& buf, MYSQL_session* session, Authen
         {
             // Client is replying to an AuthSwitch request. The packet should contain
             // the authentication token or be empty if trying to log in without pw.
-            auto buflen = buf.length();
             auto& token_storage = auth_data.client_token;
-            int tok_len = buflen - MYSQL_HEADER_LEN;
+            int tok_len = buf.length() - MYSQL_HEADER_LEN;
             if (tok_len > 0)
             {
                 token_storage.resize(tok_len);
@@ -203,12 +217,8 @@ MariaDBClientAuthenticator::exchange(GWBUF&& buf, MYSQL_session* session, Authen
             {
                 token_storage.clear();     // authenticating without password
             }
-            auth_data.client_token_type = m_passthrough_mode ? TokenType::CLEARPW : TokenType::PW_HASH;
 
-            // Assume that correct authenticator is now used. If this is not the case,
-            // authentication will fail.
-            rval.status = ExchRes::Status::READY;
-            m_state = State::CHECK_TOKEN;
+            handle_correct_plugin();
         }
         break;
 

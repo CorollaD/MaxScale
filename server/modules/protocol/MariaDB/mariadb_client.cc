@@ -635,7 +635,6 @@ bool MariaDBClientConnection::send_server_handshake()
     mxb_assert(ptr - (payload.data() + orig_size) == id_to_plugin_bytes);
     // Add plugin name.
     payload.push_back(base_plugin);
-
     bool rval = false;
     // Allocate buffer and send.
     auto pl_size = payload.size();

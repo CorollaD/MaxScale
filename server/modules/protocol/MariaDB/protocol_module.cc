@@ -206,7 +206,6 @@ bool MySQLProtocolModule::read_authentication_options(mxs::ConfigParameters* par
         const string opt_skip_auth = "skip_authentication";
         const string opt_match_host = "match_host";
         const string opt_lower_case = "lower_case_table_names";
-        const string opt_mariadb_passthrough = "mariadb_passthrough";
         const char option_is_ignored[] = "Authenticator option '%s' is no longer supported and "
                                          "its value is ignored.";
 
@@ -229,11 +228,6 @@ bool MySQLProtocolModule::read_authentication_options(mxs::ConfigParameters* par
         {
             m_user_search_settings.match_host_pattern = params->get_bool(opt_match_host);
             params->remove(opt_match_host);
-        }
-        if (params->contains(opt_mariadb_passthrough))
-        {
-            m_user_search_settings.passthrough_auth = params->get_bool(opt_mariadb_passthrough);
-            params->remove(opt_mariadb_passthrough);
         }
 
         if (params->contains(opt_lower_case))

@@ -98,9 +98,15 @@ variables that is sent to the client during connection creation. By default the
 current number of connections (`threads_connected`) is sent.
 
 ### MaxGUI
+Numerous additions have been added and improvements made to MaxGUI.
+The most notable ones are listed here:
+
+* [MXS-3735](https://jira.mariadb.org/browse/MXS-3735) Add ERD modeler to the workspace. Instructions on using it can be found [here](../Tutorials/Using-MaxGUI-Tutorial.md#create-an-erd)
 
 
 ## Bug fixes
+
+### [MXS-4477](https://jira.mariadb.org/browse/MXS-4477) GUI appears to refresh graphs continuously even when refresh is stopped
 
 ## Known Issues and Limitations
 

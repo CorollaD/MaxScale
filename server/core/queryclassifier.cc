@@ -126,6 +126,22 @@ public:
         bool     route_to_last_used = false;
     };
 
+    struct BinaryPreparedStmt
+    {
+        uint32_t     id;
+        PreparedStmt ps;
+
+        explicit BinaryPreparedStmt(uint32_t ps_id)
+            : id(ps_id)
+        {
+        }
+
+        bool operator<(const BinaryPreparedStmt& other) const
+        {
+            return id < other.id;
+        }
+    };
+
     PSManager(mxs::Parser& parser, Log log)
         : m_parser(parser)
         , m_log(log)
@@ -143,17 +159,27 @@ public:
         mxb_assert(is_prepare
                    || Parser::type_mask_contains(m_parser.get_type_mask(*buffer),
                                                  mxs::sql::TYPE_PREPARE_NAMED_STMT));
-
-        PreparedStmt stmt;
-        stmt.type = get_prepare_type(m_parser, *buffer);
-        stmt.route_to_last_used = m_parser.relates_to_previous(*buffer);
-
         if (is_prepare)
         {
-            m_binary_ps.emplace(id, std::move(stmt));
+            BinaryPreparedStmt stmt(id);
+            stmt.ps.type = get_prepare_type(m_parser, *buffer);
+            stmt.ps.route_to_last_used = m_parser.relates_to_previous(*buffer);
+
+            m_binary_ps.emplace_back(std::move(stmt));
+
+            if (m_binary_ps.back() < m_binary_ps.front())
+            {
+                // This shouldn't really happen in practice but we need to handle it anyways.
+                mxb_assert(m_binary_ps.front().id > 0xffff0000);
+                std::sort(m_binary_ps.begin(), m_binary_ps.end());
+            }
         }
         else if (m_parser.is_query(*buffer))
         {
+            PreparedStmt stmt;
+            stmt.type = get_prepare_type(m_parser, *buffer);
+            stmt.route_to_last_used = m_parser.relates_to_previous(*buffer);
+
             m_text_ps.emplace(get_text_ps_id(m_parser, *buffer), std::move(stmt));
         }
         else
@@ -165,11 +191,11 @@ public:
     const PreparedStmt* get(uint32_t id) const
     {
         const PreparedStmt* rval = nullptr;
-        BinaryPSMap::const_iterator it = m_binary_ps.find(id);
+        auto it = std::lower_bound(m_binary_ps.begin(), m_binary_ps.end(), BinaryPreparedStmt(id));
 
         if (it != m_binary_ps.end())
         {
-            rval = &it->second;
+            rval = &it->ps;
         }
         else if (m_parser.is_execute_immediately_ps(id))
         {
@@ -212,12 +238,15 @@ public:
 
     void erase(uint32_t id)
     {
-        if (m_binary_ps.erase(id) == 0)
+        auto it = std::lower_bound(m_binary_ps.begin(), m_binary_ps.end(), BinaryPreparedStmt(id));
+
+        if (it != m_binary_ps.end())
         {
-            if (m_log == Log::ALL)
-            {
-                MXB_WARNING("Closing unknown prepared statement with ID %u", id);
-            }
+            m_binary_ps.erase(it);
+        }
+        else if (m_log == Log::ALL)
+        {
+            MXB_WARNING("Closing unknown prepared statement with ID %u", id);
         }
     }
 
@@ -239,32 +268,35 @@ public:
 
     void set_param_count(uint32_t id, uint16_t param_count)
     {
-        m_binary_ps[id].param_count = param_count;
+        auto it = std::lower_bound(m_binary_ps.begin(), m_binary_ps.end(), BinaryPreparedStmt(id));
+
+        if (it != m_binary_ps.end())
+        {
+            it->ps.param_count = param_count;
+        }
     }
 
     uint16_t param_count(uint32_t id) const
     {
         uint16_t rval = 0;
-        auto it = m_binary_ps.find(id);
+        auto it = std::lower_bound(m_binary_ps.begin(), m_binary_ps.end(), BinaryPreparedStmt(id));
 
         if (it != m_binary_ps.end())
         {
-            rval = it->second.param_count;
+            rval = it->ps.param_count;
         }
 
         return rval;
     }
 
 private:
-
-    using BinaryPSMap = std::unordered_map<uint32_t, PreparedStmt>;
+    using BinaryPSFlatMap = std::vector<BinaryPreparedStmt>;
     using TextPSMap = std::unordered_map<std::string, PreparedStmt>;
 
-private:
-    mxs::Parser& m_parser;
-    BinaryPSMap  m_binary_ps;
-    TextPSMap    m_text_ps;
-    Log          m_log;
+    mxs::Parser&    m_parser;
+    BinaryPSFlatMap m_binary_ps;
+    TextPSMap       m_text_ps;
+    Log             m_log;
 };
 
 //

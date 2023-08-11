@@ -35,7 +35,12 @@ namespace pinloki
 DEFINE_EXCEPTION(BinlogReadError);
 DEFINE_EXCEPTION(GtidNotFoundError);
 
-static std::array<char, 4> PINLOKI_MAGIC = {char(0xfe), 0x62, 0x69, 0x6e};
+constexpr size_t MAGIC_SIZE = 4;
+static const std::array<char, MAGIC_SIZE> PINLOKI_MAGIC = {char(0xfe), char(0x62), char(0x69), char(0x6e)};
+static const std::array<char, MAGIC_SIZE> ZSTD_MAGIC = {char(0x28), char(0xb5), char(0x2f), char(0xfd)};
+
+// zstd a.k.a. Zstandard compression
+static const std::string COMPRESSION_EXTENSION{"zst"};
 
 struct FileLocation
 {

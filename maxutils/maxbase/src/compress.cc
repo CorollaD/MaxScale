@@ -1,7 +1,11 @@
 #include <maxbase/compress.hh>
+#include <maxbase/log.hh>
+#include <maxbase/assert.hh>
+#include <sstream>
 #include <zstd.h>
 #include <thread>
 #include <algorithm>
+#include <thread>
 
 namespace maxbase
 {
@@ -9,6 +13,8 @@ StreamCompressor::StreamCompressor(int level, int nthreads, float nice_percent)
     : m_pContext(ZSTD_createCCtx())
     , m_input_buffer(ZSTD_CStreamInSize())
     , m_output_buffer(ZSTD_CStreamOutSize())
+    , m_input_size(ZSTD_CStreamInSize())
+    , m_output_size(ZSTD_CStreamOutSize())
     , m_level(level)
     , m_nthreads(nthreads)
     , m_nice(nice_percent)
@@ -21,30 +27,64 @@ StreamCompressor::StreamCompressor(int level, int nthreads, float nice_percent)
     if (m_pContext == nullptr)
     {
         m_status = StreamStatus::INTERNAL_ERROR;
-        std::cout << "Could not create ZTD context." << std::endl;
+        MXB_SERROR("Failed to create StreamCompressor context");
     }
 }
 
-size_t StreamCompressor::get_last_error() const
+size_t StreamCompressor::last_error() const
 {
     return m_last_zerr;
 }
 
-std::string StreamCompressor::get_last_error_str() const
+std::string StreamCompressor::last_error_str() const
 {
     return ZSTD_getErrorName(m_last_zerr);
+}
+
+void StreamCompressor::set_level(int level)
+{
+    m_level = level;
+}
+
+void StreamCompressor::set_nthread(int nthreads)
+{
+    m_nthreads = nthreads;
+}
+
+void StreamCompressor::set_nice(float percent)
+{
+    m_nice = std::clamp(percent, 0.0f, 75.0f);
+}
+
+void StreamCompressor::set_buffer_sizes(size_t input_size, size_t output_size)
+{
+    m_input_size = input_size;
+    m_output_size = output_size;
 }
 
 StreamStatus StreamCompressor::compress(std::unique_ptr<std::istream>&& in,
                                         std::unique_ptr<std::ostream>&& out)
 {
+    mxb_assert(m_pContext != nullptr);
     m_status.store(StreamStatus::IN_PROCESS, std::memory_order_relaxed);
+
+    if (m_input_buffer.size() != m_input_size)
+    {
+        m_input_buffer.resize(m_input_size);
+    }
+
+    if (m_output_buffer.size() != m_output_size)
+    {
+        m_output_buffer.resize(m_output_size);
+    }
 
     if (m_status.load(std::memory_order_relaxed) != StreamStatus::OK)
     {
-        auto ret = ZSTD_CCtx_reset(m_pContext, ZSTD_reset_session_only);
-        if (ZSTD_isError(ret))
+        m_last_zerr = ZSTD_CCtx_reset(m_pContext, ZSTD_reset_session_only);
+
+        if (ZSTD_isError(m_last_zerr))
         {
+            MXB_SERROR("Failed to reset compressor context: " << last_error_str());
             m_status.store(StreamStatus::INTERNAL_ERROR, std::memory_order_relaxed);
             return m_status;
         }
@@ -53,13 +93,8 @@ StreamStatus StreamCompressor::compress(std::unique_ptr<std::istream>&& in,
     auto sInput_stream = std::move(in);
     auto sOutput_stream = std::move(out);
 
-    if (m_pContext == nullptr)
-    {
-        m_status.store(StreamStatus::INTERNAL_ERROR, std::memory_order_relaxed);
-        return m_status;
-    }
-
     m_last_zerr = ZSTD_CCtx_setParameter(m_pContext, ZSTD_c_checksumFlag, 1);
+
     if (!ZSTD_isError(m_last_zerr))
     {
         m_last_zerr = ZSTD_CCtx_setParameter(m_pContext, ZSTD_c_compressionLevel, m_level);
@@ -67,6 +102,7 @@ StreamStatus StreamCompressor::compress(std::unique_ptr<std::istream>&& in,
 
     if (ZSTD_isError(m_last_zerr))
     {
+        MXB_SERROR("Failed to set compressor parameter: " << last_error_str());
         m_status.store(StreamStatus::INTERNAL_ERROR, std::memory_order_relaxed);
         return m_status;
     }
@@ -74,10 +110,11 @@ StreamStatus StreamCompressor::compress(std::unique_ptr<std::istream>&& in,
     if (m_nthreads > 1)
     {
         size_t const ret = ZSTD_CCtx_setParameter(m_pContext, ZSTD_c_nbWorkers, m_nthreads);
+
         if (ZSTD_isError(ret))
         {
-            std::cout << "Note: the linked libzstd library doesn't support multithreading. "
-                         "Reverting to single-thread mode. \n";
+            MXB_SINFO("Installed libzstd does not support multithreading."
+                      " Continue single threaded execution");
         }
     }
 
@@ -99,11 +136,12 @@ StreamStatus StreamCompressor::compress(std::unique_ptr<std::istream>&& in,
         while (input.pos < input.size)
         {
             ZSTD_outBuffer output = {m_output_buffer.data(), m_output_buffer.size(), 0};
-            auto ret = ZSTD_compressStream2(m_pContext, &output, &input, mode);
-            if (ZSTD_isError(ret))
+            m_last_zerr = ZSTD_compressStream2(m_pContext, &output, &input, mode);
+
+            if (ZSTD_isError(m_last_zerr))
             {
+                MXB_SERROR("Compression error: " << last_error_str());
                 m_status.store(StreamStatus::INTERNAL_ERROR, std::memory_order_relaxed);
-                m_last_zerr = ret;
                 break;
             }
 
@@ -113,7 +151,7 @@ StreamStatus StreamCompressor::compress(std::unique_ptr<std::istream>&& in,
 
     if (no_input)
     {
-        // make this an error
+        MXB_SERROR("Empty input stream");
         m_status.store(StreamStatus::EMPTY_INPUT_STREAM, std::memory_order_relaxed);
     }
     else if (m_status.load(std::memory_order_relaxed) == StreamStatus::IN_PROCESS)
@@ -133,17 +171,20 @@ maxbase::StreamStatus maxbase::StreamCompressor::status() const
 
 bool StreamCompressor::verify_integrity(const std::istream& in)
 {
-    // TODO, what is the fastest method. Is this needed?
+    // TODO, what is the fastest method.
     return false;
 }
 
-StreamDecompressor::StreamDecompressor()
+StreamDecompressor::StreamDecompressor(int flush_nchars)
     : m_pContext(ZSTD_createDCtx())
+    , m_flush_nchars(flush_nchars)
+    , m_input_size(ZSTD_CStreamInSize())
+    , m_output_size(ZSTD_CStreamOutSize())
 {
     if (m_pContext == nullptr)
     {
         m_status.store(StreamStatus::INTERNAL_ERROR, std::memory_order_relaxed);
-        std::cout << "Could not create decompressor context." << std::endl;
+        MXB_SERROR("Could not create decompressor context.");
     }
 
     m_input_buffer.resize(ZSTD_CStreamInSize());
@@ -158,14 +199,26 @@ StreamStatus StreamDecompressor::status() const
 StreamStatus StreamDecompressor::decompress(std::unique_ptr<std::istream>&& in,
                                     std::ostream& out)
 {
+    mxb_assert(m_pContext != nullptr);
+
     m_status.store(StreamStatus::IN_PROCESS, std::memory_order_relaxed);
 
+    if (m_input_buffer.size() != m_input_size)
+    {
+        m_input_buffer.resize(m_input_size);
+    }
+
+    if (m_output_buffer.size() != m_output_size)
+    {
+        m_output_buffer.resize(m_output_size);
+    }\
     // ZSTD_DCtx_reset
     auto sInput_stream = std::move(in);
 
     auto to_read = m_input_buffer.size();
     auto no_input = true;
     size_t last_ret = 0;
+    size_t chars_out = 0;
 
     for (;;)
     {
@@ -182,29 +235,35 @@ StreamStatus StreamDecompressor::decompress(std::unique_ptr<std::istream>&& in,
         {
             ZSTD_outBuffer output = {m_output_buffer.data(), m_output_buffer.size(), 0};
 
-            auto ret = ZSTD_decompressStream(m_pContext, &output, &input);
+            m_last_zerr = ZSTD_decompressStream(m_pContext, &output, &input);
 
-            if (ZSTD_isError(ret))
+            if (ZSTD_isError(m_last_zerr))
             {
-                std::cout << "Decompression error = " << ZSTD_getErrorName(ret) << std::endl;
+                MXB_SERROR("Decompression error = " << ZSTD_getErrorName(m_last_zerr));
                 m_status.store(StreamStatus::INTERNAL_ERROR, std::memory_order_relaxed);
-                m_last_zerr = ret;
                 break;
             }
 
             out.write(m_output_buffer.data(), output.pos);
+            chars_out += output.pos;
+            if (m_flush_nchars && chars_out > m_flush_nchars)
+            {
+                out.flush();
+                chars_out = 0;
+            }
         }
     }
 
-    out.flush();    // TODO, should probably flush more often.
+    out.flush();
 
     if (no_input)
     {
-        // make this an error
+        MXB_SERROR("Empty input stream");
         m_status.store(StreamStatus::EMPTY_INPUT_STREAM, std::memory_order_relaxed);
     }
     else if (last_ret)
     {
+        MXB_SERROR("Decompression error, possible truncated stream.");
         m_status.store(StreamStatus::CORRUPTED, std::memory_order_relaxed);
     }
     else if (m_status.load(std::memory_order_relaxed) == StreamStatus::IN_PROCESS)
@@ -214,16 +273,24 @@ StreamStatus StreamDecompressor::decompress(std::unique_ptr<std::istream>&& in,
 
     ZSTD_freeDCtx(m_pContext);
 
+    std::cerr << "DECOMPRESS DONE" << std::endl;
+
     return m_status.load(std::memory_order_relaxed);
 }
 
-size_t StreamDecompressor::get_last_error() const
+size_t StreamDecompressor::last_error() const
 {
     return m_last_zerr;
 }
 
-std::string StreamDecompressor::get_last_error_str() const
+std::string StreamDecompressor::last_error_str() const
 {
     return ZSTD_getErrorName(m_last_zerr);
+}
+
+void maxbase::StreamDecompressor::set_buffer_sizes(size_t input_size, size_t output_size)
+{
+    m_input_size = input_size;
+    m_output_size = output_size;
 }
 }

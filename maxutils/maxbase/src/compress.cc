@@ -23,7 +23,6 @@
 
 // TODO verify_integrity
 // TODO cpu limit
-// TODO check input and output stream
 // TODO don't compile if zstd not available,
 //      but add libzstd to install_build_deps.sh
 
@@ -130,16 +129,26 @@ CompressionStatus Compressor::compress(std::istream& in,
     }
 
     long to_read = m_input_buffer.size();
-    auto no_input = true;
+    auto has_input = false;
 
-    for (;;)
+    do
     {
         in.read(m_input_buffer.data(), to_read);
-        if (in.gcount() == 0)
+        if (in.fail() && !in.eof())
         {
-            break;
+            if (in.bad())
+            {
+                m_status = CompressionStatus::IO_ERROR;
+                MXB_SERROR("IO error reading input stream");
+            }
+            else
+            {
+                m_status = CompressionStatus::IO_ERROR;
+                MXB_SERROR("Failed to read input stream");
+            }
         }
-        no_input = false;
+
+        has_input |= in.gcount() > 0;
 
         bool last_chunk = in.gcount() < to_read;
         ZSTD_EndDirective mode = last_chunk ? ZSTD_e_end : ZSTD_e_continue;
@@ -161,15 +170,29 @@ CompressionStatus Compressor::compress(std::istream& in,
             }
 
             out.write(m_output_buffer.data(), output.pos);
+            if (out.fail())
+            {
+                if (out.bad())
+                {
+                    m_status = CompressionStatus::IO_ERROR;
+                    MXB_SERROR("IO error writing to output stream");
+                }
+                else
+                {
+                    m_status = CompressionStatus::IO_ERROR;
+                    MXB_SERROR("Failed to write to output stream");
+                }
+            }
 
             done = last_chunk ? m_last_err == 0 : input.pos == input.size;
         }
         while (!done);
     }
+    while (in.gcount() != 0);
 
     out.flush();
 
-    if (no_input)
+    if (!has_input)
     {
         MXB_SERROR("Empty input stream");
         m_status = CompressionStatus::EMPTY_INPUT_STREAM;
@@ -256,6 +279,20 @@ CompressionStatus Decompressor::decompress(std::istream& in,
     for (;;)
     {
         in.read(m_input_buffer.data(), to_read);
+        if (in.fail() && !in.eof())
+        {
+            if (in.bad())
+            {
+                m_status = CompressionStatus::IO_ERROR;
+                MXB_SERROR("IO error reading input stream");
+            }
+            else
+            {
+                m_status = CompressionStatus::IO_ERROR;
+                MXB_SERROR("Failed to read input stream");
+            }
+        }
+
         if (in.gcount() == 0)
         {
             break;
@@ -281,6 +318,19 @@ CompressionStatus Decompressor::decompress(std::istream& in,
             }
 
             out.write(m_output_buffer.data(), output.pos);
+            if (out.fail())
+            {
+                if (out.bad())
+                {
+                    m_status = CompressionStatus::IO_ERROR;
+                    MXB_SERROR("IO error writing to output stream");
+                }
+                else
+                {
+                    m_status = CompressionStatus::IO_ERROR;
+                    MXB_SERROR("Failed to write to output stream");
+                }
+            }
 
             bytes_out += output.pos;
             if (m_flush_nchars && bytes_out > m_flush_nchars)

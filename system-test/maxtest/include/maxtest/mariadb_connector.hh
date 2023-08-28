@@ -70,6 +70,9 @@ public:
     ScopedUser create_user(const std::string& user, const std::string& host,
                            const std::string& pw);
 
+    ScopedUser create_user(const std::string& user, const std::string& host,
+                           const std::string& plugin, const std::string& auth_string);
+
     /**
      * Same as above for Xpand. Will create some extra error messages.
      */
